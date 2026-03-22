@@ -1,0 +1,49 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+
+# ── Data (SQLite DB + FAISS index — machine-local, not version-controlled) ────
+data/*.db
+data/*.idx
+data/*.meta
+# Keep the directory itself tracked
+!data/.gitkeep
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# ── HuggingFace model cache (large binary files) ─────────────────────────────
+.cache/huggingface/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+CLAUDE.md

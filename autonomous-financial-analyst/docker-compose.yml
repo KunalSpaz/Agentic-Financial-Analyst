@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+
+  # ── FastAPI Backend ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      target: runtime
+    container_name: nexus-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist SQLite DB and FAISS index across container restarts
+      - nexus_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s   # give FinBERT pre-warm time
+
+  # ── Streamlit Frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      target: runtime
+    container_name: nexus-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Frontend talks to the backend container by service name
+      - BACKEND_URL=http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["streamlit", "run", "frontend/app.py",
+              "--server.address", "0.0.0.0",
+              "--server.port", "8501",
+              "--server.headless", "true"]
+
+volumes:
+  nexus_data:
+    driver: local
