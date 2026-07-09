@@ -3,7 +3,7 @@ test_api_routes.py
 -------------------
 Integration tests for all FastAPI routes using the HTTPX TestClient.
 
-All external dependencies (CrewAI, yfinance, NewsAPI, FinBERT, SQLAlchemy)
+All external dependencies (LangGraph/OpenAI, yfinance, NewsAPI, FinBERT, SQLAlchemy)
 are mocked so these tests run without network access or API keys.
 
 Covers:
@@ -28,10 +28,6 @@ from fastapi.testclient import TestClient
 # ── Patch heavy dependencies BEFORE importing the app ──────────────────────
 # This prevents FinBERT from downloading on import and OpenAI from initialising.
 import sys
-sys.modules.setdefault("crewai",         MagicMock())
-sys.modules.setdefault("crewai.agent",   MagicMock())
-sys.modules.setdefault("crewai.task",    MagicMock())
-sys.modules.setdefault("crewai.crew",    MagicMock())
 sys.modules.setdefault("faiss",          MagicMock())
 sys.modules.setdefault("transformers",   MagicMock())
 sys.modules.setdefault("torch",          MagicMock())
@@ -98,8 +94,8 @@ class TestAnalyzeStock:
             "quote": {"price": 175.0, "sector": "Technology"},
             "rag_context_used": False,
         }
-        with patch("backend.api.routes.stock_routes._crew") as mock_crew:
-            mock_crew.run.return_value = mock_result
+        with patch("backend.api.routes.stock_routes._graph") as mock_graph:
+            mock_graph.run.return_value = mock_result
             resp = client.post("/analyze-stock", json={"ticker": "AAPL"})
         assert resp.status_code == 200
         data = resp.json()
@@ -111,9 +107,9 @@ class TestAnalyzeStock:
         resp = client.post("/analyze-stock", json={})
         assert resp.status_code == 422
 
-    def test_crew_error_returns_500(self, client):
-        with patch("backend.api.routes.stock_routes._crew") as mock_crew:
-            mock_crew.run.side_effect = RuntimeError("CrewAI failed")
+    def test_graph_error_returns_500(self, client):
+        with patch("backend.api.routes.stock_routes._graph") as mock_graph:
+            mock_graph.run.side_effect = RuntimeError("LangGraph failed")
             resp = client.post("/analyze-stock", json={"ticker": "AAPL"})
         assert resp.status_code == 500
 
@@ -169,10 +165,11 @@ class TestTopNews:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestMarketOpportunities:
-    def test_returns_200_and_list(self, client):
+    def test_returns_200_and_opportunities_list(self, client):
         resp = client.get("/market-opportunities")
         assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+        data = resp.json()
+        assert isinstance(data["opportunities"], list)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,18 +191,23 @@ class TestBacktest:
         )
 
     def test_returns_200_with_metrics(self, client):
-        with patch("backend.api.routes.backtest_routes._bt") as mock_bt:
+        with patch("backend.api.routes.backtest_routes._bt") as mock_bt, \
+             patch("backend.api.routes.backtest_routes._btng") as mock_btng:
             mock_bt.run_backtest.return_value = self._mock_backtest_result()
+            mock_btng.run.return_value = "Solid risk-adjusted return."
             resp = client.post("/backtest", json={"ticker": "AAPL"})
         assert resp.status_code == 200
         data = resp.json()
         assert "metrics" in data
         assert "equity_curve" in data
         assert "trade_log" in data
+        assert data["narrative"] == "Solid risk-adjusted return."
 
     def test_metrics_contain_required_fields(self, client):
-        with patch("backend.api.routes.backtest_routes._bt") as mock_bt:
+        with patch("backend.api.routes.backtest_routes._bt") as mock_bt, \
+             patch("backend.api.routes.backtest_routes._btng") as mock_btng:
             mock_bt.run_backtest.return_value = self._mock_backtest_result()
+            mock_btng.run.return_value = "ok"
             resp = client.post("/backtest", json={"ticker": "AAPL"})
         metrics = resp.json()["metrics"]
         for key in ("total_return", "sharpe_ratio", "max_drawdown", "win_rate", "num_trades"):
@@ -217,6 +219,10 @@ class TestBacktest:
 
     def test_invalid_sentiment_returns_422(self, client):
         resp = client.post("/backtest", json={"ticker": "AAPL", "sentiment_label": "VERY_BULLISH"})
+        assert resp.status_code == 422
+
+    def test_zero_capital_returns_422(self, client):
+        resp = client.post("/backtest", json={"ticker": "AAPL", "initial_capital": 0})
         assert resp.status_code == 422
 
     def test_value_error_returns_422(self, client):
@@ -244,8 +250,10 @@ class TestPortfolioAnalysis:
     }
 
     def test_returns_200_with_risk_metrics(self, client):
-        with patch("backend.api.routes.portfolio_routes._prs") as mock_prs:
+        with patch("backend.api.routes.portfolio_routes._prs") as mock_prs, \
+             patch("backend.api.routes.portfolio_routes._prng") as mock_prng:
             mock_prs.analyse.return_value = self.MOCK_RISK_RESULT
+            mock_prng.run.return_value = "Concentrated in tech."
             resp = client.post(
                 "/portfolio-analysis",
                 json={"holdings": {"AAPL": 0.6, "MSFT": 0.4}},
@@ -254,6 +262,7 @@ class TestPortfolioAnalysis:
         data = resp.json()
         assert "portfolio_volatility" in data
         assert "sharpe_ratio" in data
+        assert data["narrative"] == "Concentrated in tech."
 
     def test_empty_holdings_returns_400(self, client):
         resp = client.post("/portfolio-analysis", json={"holdings": {}})
@@ -283,14 +292,18 @@ class TestOptimizeStrategy:
     }
 
     def test_returns_200_with_best_parameters(self, client):
-        with patch("backend.api.routes.optimization_routes._opt") as mock_opt:
+        with patch("backend.api.routes.optimization_routes._opt") as mock_opt, \
+             patch("backend.api.routes.optimization_routes._optng") as mock_optng:
             mock_opt.optimize.return_value = self.MOCK_OPT_RESULT
+            mock_optng.run.return_value = "Aggressive thresholds won out."
             resp = client.post(
                 "/optimize-strategy",
                 json={"ticker": "AAPL", "objective": "maximize_return"},
             )
         assert resp.status_code == 200
-        assert "best_parameters" in resp.json()
+        data = resp.json()
+        assert "best_parameters" in data
+        assert data["narrative"] == "Aggressive thresholds won out."
 
     def test_invalid_objective_returns_422(self, client):
         resp = client.post(

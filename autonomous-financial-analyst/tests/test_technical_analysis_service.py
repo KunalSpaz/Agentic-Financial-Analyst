@@ -134,21 +134,37 @@ class TestGetLatestSignals:
         expected_close = float(ohlcv_300["Close"].iloc[-1])
         assert abs(signals["close"] - expected_close) < 0.001
 
-    def test_golden_cross_when_sma50_above_sma200(self, service, ohlcv_300):
+    def test_golden_cross_when_sma50_crosses_above_sma200(self, service, ohlcv_300):
         df = service.compute_indicators(ohlcv_300.copy())
-        # Force golden cross by overwriting the last row
+        # golden_cross/death_cross are edge-triggered: the previous row must be
+        # in the opposite (or equal) configuration for a cross to register.
+        df.loc[df.index[-2], "SMA_50"] = 150.0
+        df.loc[df.index[-2], "SMA_200"] = 150.0
         df.loc[df.index[-1], "SMA_50"] = 200.0
         df.loc[df.index[-1], "SMA_200"] = 150.0
         signals = service.get_latest_signals(df)
         assert signals["golden_cross"] is True
         assert signals["death_cross"] is False
 
-    def test_death_cross_when_sma50_below_sma200(self, service, ohlcv_300):
+    def test_death_cross_when_sma50_crosses_below_sma200(self, service, ohlcv_300):
         df = service.compute_indicators(ohlcv_300.copy())
+        df.loc[df.index[-2], "SMA_50"] = 150.0
+        df.loc[df.index[-2], "SMA_200"] = 150.0
         df.loc[df.index[-1], "SMA_50"] = 140.0
         df.loc[df.index[-1], "SMA_200"] = 170.0
         signals = service.get_latest_signals(df)
         assert signals["death_cross"] is True
+        assert signals["golden_cross"] is False
+
+    def test_no_golden_cross_when_already_above_previous_day(self, service, ohlcv_300):
+        """golden_cross must NOT fire every day the MAs happen to sit above one
+        another — only on the day of the actual cross."""
+        df = service.compute_indicators(ohlcv_300.copy())
+        df.loc[df.index[-2], "SMA_50"] = 200.0
+        df.loc[df.index[-2], "SMA_200"] = 150.0
+        df.loc[df.index[-1], "SMA_50"] = 201.0
+        df.loc[df.index[-1], "SMA_200"] = 150.0
+        signals = service.get_latest_signals(df)
         assert signals["golden_cross"] is False
 
     def test_rsi_oversold_flag_set_when_rsi_below_35(self, service, ohlcv_300):

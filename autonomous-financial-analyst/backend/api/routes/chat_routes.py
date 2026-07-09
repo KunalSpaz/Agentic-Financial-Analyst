@@ -17,24 +17,21 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
-limiter = Limiter(key_func=get_remote_address)
-
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.user_query import UserQuery
 from backend.services.market_data_service import MarketDataService
 from backend.services.news_service import NewsService
-from backend.services.rag_service import RAGService
+from backend.services.rag_service import get_rag_service
 from backend.utils.config import settings
 from backend.utils.logger import get_logger
 
 router = APIRouter(prefix="/chat", tags=["AI Chatbot"])
 logger = get_logger(__name__)
 
-_rag = RAGService()
+_rag = get_rag_service()
 _mds = MarketDataService()
 _ns = NewsService()
 
@@ -62,7 +59,10 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """Request body for the /chat endpoint."""
     message: str = Field(..., min_length=1, max_length=2000)
-    ticker: Optional[str] = Field(default=None, max_length=10, description="Optional ticker to focus analysis on")
+    ticker: Optional[str] = Field(
+        default=None, max_length=10, pattern=r"^[A-Za-z0-9.\-]{1,10}$",
+        description="Optional ticker to focus analysis on",
+    )
     history: List[ChatMessage] = Field(default_factory=list, max_length=20, description="Prior conversation turns (max 20 turns)")
 
 
@@ -182,8 +182,9 @@ async def chat(
             query_payload=body.message[:500],
             response_summary=(reply or "")[:500],
         ))
-        db.commit()
+        db.flush()
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist query log: %s", exc)
 
     return {

@@ -18,15 +18,23 @@ st.markdown("Live market snapshot — indices, top financial headlines, and over
 
 col1, col2, col3, col4 = st.columns(4)
 
-# ── Market Report ─────────────────────────────────────────────────────────────
-with st.spinner("Loading market data…"):
-    try:
-        resp = httpx.get(f"{api_url}/market-report", timeout=30)
-        report = resp.json() if resp.status_code == 200 else {}
-    except Exception as e:
-        report = {}
-        st.error(f"Cannot connect to backend: {e}")
+refresh = st.button("🔄 Refresh")
 
+# ── Market Report ─────────────────────────────────────────────────────────────
+if "market_overview_report" not in st.session_state or refresh:
+    with st.spinner("Loading market data…"):
+        try:
+            resp = httpx.get(f"{api_url}/market-report", timeout=30)
+            if resp.status_code == 200:
+                st.session_state["market_overview_report"] = resp.json()
+            else:
+                st.session_state["market_overview_report"] = {}
+                st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+        except Exception:
+            st.session_state["market_overview_report"] = {}
+            st.error("Cannot connect to the backend. Please check that it's running.")
+
+report = st.session_state.get("market_overview_report", {})
 indices = report.get("market_indices", {})
 
 with col1:
@@ -71,12 +79,20 @@ with col_right:
 st.divider()
 st.subheader("📰 Top Financial News")
 
-with st.spinner("Loading headlines…"):
-    try:
-        news_resp = httpx.get(f"{api_url}/top-news?limit=10", timeout=20)
-        news = news_resp.json() if news_resp.status_code == 200 else []
-    except Exception:
-        news = []
+if "market_overview_news" not in st.session_state or refresh:
+    with st.spinner("Loading headlines…"):
+        try:
+            news_resp = httpx.get(f"{api_url}/top-news?limit=10", timeout=20)
+            if news_resp.status_code == 200:
+                st.session_state["market_overview_news"] = news_resp.json()
+            else:
+                st.session_state["market_overview_news"] = []
+                st.error(f"Failed to load headlines (status {news_resp.status_code}).")
+        except Exception:
+            st.session_state["market_overview_news"] = []
+            st.error("Cannot connect to the backend to load headlines.")
+
+news = st.session_state.get("market_overview_news", [])
 
 for article in news[:8]:
     with st.expander(article.get("title", "No title")[:100]):

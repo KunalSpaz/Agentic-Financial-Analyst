@@ -13,12 +13,10 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
 from sqlalchemy.orm import Session
 
+from backend.agents.optimization_graph import StrategyOptimizationNarrativeGraph
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.strategy_optimization import StrategyOptimization
 from backend.services.strategy_optimization_service import StrategyOptimizationService
@@ -28,11 +26,14 @@ router = APIRouter(tags=["Optimization"])
 logger = get_logger(__name__)
 
 _opt = StrategyOptimizationService()
+_optng = StrategyOptimizationNarrativeGraph()
+
+_TICKER_PATTERN = r"^[A-Za-z0-9.\-]{1,10}$"
 
 
 class OptimizationRequest(BaseModel):
     """Request body for /optimize-strategy."""
-    ticker: str = Field(..., min_length=1, max_length=10, description="Stock ticker symbol")
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=_TICKER_PATTERN, description="Stock ticker symbol")
     objective: str = Field(
         default="maximize_return",
         pattern="^(maximize_return|maximize_sharpe|minimize_drawdown)$",
@@ -74,6 +75,9 @@ async def optimize_strategy(
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
+    narrative = await asyncio.to_thread(_optng.run, ticker, body.objective, result)
+    result["narrative"] = narrative
+
     # Persist
     try:
         db_opt = StrategyOptimization(
@@ -85,10 +89,12 @@ async def optimize_strategy(
             best_drawdown=result.get("best_drawdown"),
             iterations=result.get("iterations"),
             all_results=result.get("all_results"),
+            narrative=narrative,
         )
         db.add(db_opt)
-        db.commit()
+        db.flush()
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist optimization result: %s", exc)
 
     return result

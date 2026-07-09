@@ -14,8 +14,14 @@ API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 
 def _check_backend(api_url: str) -> bool:
+    # The backend runs CPU-bound work (FinBERT inference, indicator
+    # computation) synchronously in a single worker process; that can hold
+    # the GIL long enough to delay even a trivial health-check request by
+    # several seconds while a heavier request is in flight. A short timeout
+    # here reads a merely-busy backend as "offline" on every page nav that
+    # happens to land mid-computation.
     try:
-        resp = httpx.get(f"{api_url}/", timeout=2)
+        resp = httpx.get(f"{api_url}/", timeout=5)
         return resp.status_code == 200
     except Exception:
         return False
@@ -53,7 +59,7 @@ def render_sidebar() -> str:
                     margin-top: 4px;
                     letter-spacing: 1px;
                     text-transform: uppercase;
-                ">Powered by CrewAI · GPT-4o</div>
+                ">Powered by LangGraph · GPT-4o</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -61,11 +67,15 @@ def render_sidebar() -> str:
 
         # ── API Config ────────────────────────────────────────────────
         st.markdown("#### ⚙️ Configuration")
+        # NOTE: no `placeholder=` here — a placeholder renders as ghost text
+        # whenever the real value is empty, and since it read the same URL
+        # as the default it was visually indistinguishable from a real,
+        # working value while _check_backend("") was actually failing.
         api_url = st.text_input(
             "Backend URL",
-            value=API_BASE_URL,
+            value=st.session_state.get("backend_url", API_BASE_URL),
+            key="backend_url",
             label_visibility="collapsed",
-            placeholder="http://localhost:8000",
         )
 
         # Backend status pill

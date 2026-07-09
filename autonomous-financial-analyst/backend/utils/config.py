@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     faiss_index_path: str = Field(default="./data/faiss_index")
     rag_top_k: int = Field(default=5)
 
+    # ── LangGraph ──────────────────────────────────────────────────────────
+    graph_max_concurrency: int = Field(
+        default=4,
+        description="Worker pool size for enforcing a hard wall-clock timeout on graph LLM calls.",
+    )
+    graph_timeout_seconds: int = Field(default=300)
+
     @property
     def stock_universe_list(self) -> List[str]:
         """Return the stock universe as a list of ticker strings."""

@@ -71,10 +71,14 @@ class PortfolioRiskService:
         if returns_df.empty:
             return {"error": "Insufficient return data."}
 
-        # Portfolio returns
+        # Portfolio returns — only over tickers that survived the dropna() above
         w = np.array([holdings.get(t, 0) for t in returns_df.columns])
-        w = w / w.sum()
+        w_sum = w.sum()
+        if w_sum == 0:
+            return {"error": "None of the tickers with available return data have a positive weight."}
+        w = w / w_sum
         port_returns = returns_df.values @ w
+        port_returns_series = pd.Series(port_returns, index=returns_df.index)
 
         # Metrics
         portfolio_volatility = float(np.std(port_returns) * math.sqrt(252))
@@ -84,7 +88,7 @@ class PortfolioRiskService:
         var_95 = float(np.percentile(port_returns, 5))
 
         # Beta vs SPY
-        beta = self._compute_beta(port_returns, period)
+        beta = self._compute_beta(port_returns_series, period)
 
         # Correlation matrix
         corr = returns_df.corr().round(4).to_dict()
@@ -107,20 +111,22 @@ class PortfolioRiskService:
             "sector_exposure": {k: round(v, 4) for k, v in sector_weights.items()},
         }
 
-    def _compute_beta(self, port_returns: np.ndarray, period: str) -> float:
-        """Compute portfolio beta relative to SPY."""
+    def _compute_beta(self, port_returns: pd.Series, period: str) -> float:
+        """Compute portfolio beta relative to SPY, aligned by trading date."""
         try:
             spy_df = self._mds.get_historical_data(_BENCHMARK, period=period)
-            spy_returns = spy_df["Close"].pct_change().dropna().values
-            n = min(len(port_returns), len(spy_returns))
-            if n < 30:
+            spy_returns = spy_df["Close"].pct_change().dropna()
+            aligned = pd.concat(
+                [port_returns.rename("portfolio"), spy_returns.rename("benchmark")],
+                axis=1, join="inner",
+            ).dropna()
+            if len(aligned) < 30:
                 return 1.0
-            p = port_returns[-n:]
-            s = spy_returns[-n:]
-            cov = np.cov(p, s)[0, 1]
-            var = np.var(s)
+            cov = np.cov(aligned["portfolio"], aligned["benchmark"])[0, 1]
+            var = np.var(aligned["benchmark"])
             return float(cov / var) if var > 0 else 1.0
-        except Exception:
+        except Exception as exc:
+            logger.warning("Beta computation failed, defaulting to 1.0: %s", exc)
             return 1.0
 
     @staticmethod

@@ -24,7 +24,6 @@ sys.modules.setdefault("faiss",        MagicMock())
 sys.modules.setdefault("transformers", MagicMock())
 sys.modules.setdefault("torch",        MagicMock())
 sys.modules.setdefault("newsapi",      MagicMock())
-sys.modules.setdefault("crewai",       MagicMock())
 
 from backend.services.rag_service import (  # noqa: E402
     CHUNK_OVERLAP,

@@ -29,7 +29,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-sys.modules.setdefault("crewai",       MagicMock())
 sys.modules.setdefault("faiss",        MagicMock())
 sys.modules.setdefault("transformers", MagicMock())
 sys.modules.setdefault("torch",        MagicMock())
@@ -205,13 +204,15 @@ class TestGetMarketOpportunities:
         resp = client.get("/market-opportunities")
         assert resp.status_code == 200
 
-    def test_returns_list(self, client):
-        resp = client.get("/market-opportunities")
-        assert isinstance(resp.json(), list)
+    def test_returns_dict_with_opportunities_list(self, client):
+        data = client.get("/market-opportunities").json()
+        assert isinstance(data, dict)
+        assert isinstance(data["opportunities"], list)
+        assert "market_narrative" in data
 
-    def test_empty_db_returns_empty_list(self, client):
-        resp = client.get("/market-opportunities")
-        assert resp.json() == []
+    def test_empty_db_returns_empty_opportunities(self, client):
+        data = client.get("/market-opportunities").json()
+        assert data["opportunities"] == []
 
     def test_cached_results_have_required_fields(self, app, client):
         """Pre-populate DB with one opportunity and verify field mapping."""
@@ -232,7 +233,7 @@ class TestGetMarketOpportunities:
         try:
             resp = client.get("/market-opportunities")
             assert resp.status_code == 200
-            data = resp.json()
+            data = resp.json()["opportunities"]
             assert len(data) >= 1
             first = data[0]
             for field in ("rank", "ticker", "recommendation", "confidence_score"):
@@ -241,50 +242,69 @@ class TestGetMarketOpportunities:
             db.delete(opp)
             db.commit()
 
-    def test_refresh_true_runs_crew(self, client):
-        mock_opps = [
-            {"ticker": "AAPL", "rank": 1, "recommendation": "BUY",
-             "confidence_score": 78.0, "current_price": 175.0,
-             "sector": "Technology", "rationale": "Strong"},
-        ]
-        with patch("backend.api.routes.market_routes.MarketScanCrew") as mock_crew_cls:
-            mock_crew = MagicMock()
-            mock_crew.scan.return_value = mock_opps
-            mock_crew_cls.return_value = mock_crew
+    def test_refresh_true_runs_graph(self, client):
+        mock_scan_result = {
+            "opportunities": [
+                {"ticker": "AAPL", "rank": 1, "recommendation": "BUY",
+                 "confidence_score": 78.0, "current_price": 175.0,
+                 "sector": "Technology", "rationale": "Strong"},
+            ],
+            "market_narrative": "Tech-heavy top picks.",
+        }
+        with patch("backend.api.routes.market_routes.MarketScanGraph") as mock_graph_cls:
+            mock_graph = MagicMock()
+            mock_graph.scan.return_value = mock_scan_result
+            mock_graph_cls.return_value = mock_graph
             resp = client.get("/market-opportunities?refresh=true")
         assert resp.status_code == 200
-        mock_crew.scan.assert_called_once()
+        mock_graph.scan.assert_called_once()
 
     def test_refresh_true_returns_scan_results(self, client):
-        mock_opps = [
-            {"ticker": "MSFT", "rank": 1, "recommendation": "STRONG BUY",
-             "confidence_score": 85.0, "current_price": 380.0,
-             "sector": "Technology", "rationale": "AI growth"},
-        ]
-        with patch("backend.api.routes.market_routes.MarketScanCrew") as mock_crew_cls:
-            mock_crew_cls.return_value.scan.return_value = mock_opps
+        mock_scan_result = {
+            "opportunities": [
+                {"ticker": "MSFT", "rank": 1, "recommendation": "STRONG BUY",
+                 "confidence_score": 85.0, "current_price": 380.0,
+                 "sector": "Technology", "rationale": "AI growth"},
+            ],
+            "market_narrative": "",
+        }
+        with patch("backend.api.routes.market_routes.MarketScanGraph") as mock_graph_cls:
+            mock_graph_cls.return_value.scan.return_value = mock_scan_result
             resp = client.get("/market-opportunities?refresh=true")
-        assert resp.json()[0]["ticker"] == "MSFT"
+        assert resp.json()["opportunities"][0]["ticker"] == "MSFT"
 
-    def test_refresh_crew_exception_returns_500(self, client):
-        with patch("backend.api.routes.market_routes.MarketScanCrew") as mock_crew_cls:
-            mock_crew_cls.return_value.scan.side_effect = RuntimeError("AI failure")
+    def test_refresh_true_returns_market_narrative(self, client):
+        mock_scan_result = {
+            "opportunities": [],
+            "market_narrative": "Sector clustering around AI infrastructure.",
+        }
+        with patch("backend.api.routes.market_routes.MarketScanGraph") as mock_graph_cls:
+            mock_graph_cls.return_value.scan.return_value = mock_scan_result
+            resp = client.get("/market-opportunities?refresh=true")
+        assert resp.json()["market_narrative"] == "Sector clustering around AI infrastructure."
+
+    def test_refresh_graph_exception_returns_500(self, client):
+        with patch("backend.api.routes.market_routes.MarketScanGraph") as mock_graph_cls:
+            mock_graph_cls.return_value.scan.side_effect = RuntimeError("AI failure")
             resp = client.get("/market-opportunities?refresh=true")
         assert resp.status_code == 500
 
     def test_refresh_true_persists_to_db(self, client):
         """Scan results should be written to the database."""
-        mock_opps = [
-            {"ticker": "NVDA", "rank": 1, "recommendation": "BUY",
-             "confidence_score": 80.0, "current_price": 900.0,
-             "sector": "Technology", "rationale": "GPU demand"},
-        ]
-        with patch("backend.api.routes.market_routes.MarketScanCrew") as mock_crew_cls:
-            mock_crew_cls.return_value.scan.return_value = mock_opps
+        mock_scan_result = {
+            "opportunities": [
+                {"ticker": "NVDA", "rank": 1, "recommendation": "BUY",
+                 "confidence_score": 80.0, "current_price": 900.0,
+                 "sector": "Technology", "rationale": "GPU demand"},
+            ],
+            "market_narrative": "",
+        }
+        with patch("backend.api.routes.market_routes.MarketScanGraph") as mock_graph_cls:
+            mock_graph_cls.return_value.scan.return_value = mock_scan_result
             resp = client.get("/market-opportunities?refresh=true")
 
         assert resp.status_code == 200
         # Verify the opportunity now appears in cached endpoint
         cached = client.get("/market-opportunities")
-        tickers = [r["ticker"] for r in cached.json()]
+        tickers = [r["ticker"] for r in cached.json()["opportunities"]]
         assert "NVDA" in tickers

@@ -14,12 +14,10 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
 from sqlalchemy.orm import Session
 
+from backend.agents.portfolio_graph import PortfolioRiskNarrativeGraph
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.portfolio_risk_report import PortfolioRiskReport
 from backend.services.portfolio_risk_service import PortfolioRiskService
@@ -29,6 +27,7 @@ router = APIRouter(tags=["Portfolio"])
 logger = get_logger(__name__)
 
 _prs = PortfolioRiskService()
+_prng = PortfolioRiskNarrativeGraph()
 
 
 class PortfolioRequest(BaseModel):
@@ -66,6 +65,9 @@ async def analyse_portfolio(
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
+    narrative = await asyncio.to_thread(_prng.run, result)
+    result["narrative"] = narrative
+
     # Persist report
     try:
         portfolio_id = str(uuid.uuid4())[:8]
@@ -79,11 +81,13 @@ async def analyse_portfolio(
             correlation_matrix=result.get("correlation_matrix"),
             sector_exposure=result.get("sector_exposure"),
             var_95=result.get("var_95_daily"),
+            narrative=narrative,
         )
         db.add(report)
-        db.commit()
+        db.flush()
         result["portfolio_id"] = portfolio_id
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist portfolio report: %s", exc)
 
     return result

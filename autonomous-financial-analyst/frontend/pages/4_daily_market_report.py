@@ -16,16 +16,22 @@ api_url = render_sidebar()
 st.title("📋 Daily AI Market Report")
 st.markdown("AI-generated daily market briefing covering opportunities, sentiment, and recommended actions.")
 
-if st.button("🔄 Refresh Report", type="primary"):
-    st.cache_data.clear()
+refresh = st.button("🔄 Refresh Report", type="primary")
 
-with st.spinner("Generating AI market briefing…"):
-    try:
-        resp = httpx.get(f"{api_url}/market-report", timeout=60)
-        report = resp.json() if resp.status_code == 200 else {}
-    except Exception as e:
-        st.error(f"Connection error: {e}")
-        report = {}
+if "daily_report" not in st.session_state or refresh:
+    with st.spinner("Generating AI market briefing…"):
+        try:
+            resp = httpx.get(f"{api_url}/market-report", timeout=60)
+            if resp.status_code == 200:
+                st.session_state["daily_report"] = resp.json()
+            else:
+                st.session_state["daily_report"] = {}
+                st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+        except Exception:
+            st.session_state["daily_report"] = {}
+            st.error("Cannot connect to the backend. Please check that it's running.")
+
+report = st.session_state.get("daily_report", {})
 
 if report:
     col_date, col_sentiment = st.columns([2, 1])

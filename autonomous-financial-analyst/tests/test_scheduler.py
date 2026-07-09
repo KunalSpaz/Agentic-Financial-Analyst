@@ -14,7 +14,7 @@ Covers:
     - Handles gracefully when not running
 
   _job_daily_market_scan():
-    - Calls MarketScanCrew.scan()
+    - Calls MarketScanGraph.scan()
     - Persists each opportunity to DB
     - Logs and continues on exception
 
@@ -34,7 +34,6 @@ sys.modules.setdefault("faiss",        MagicMock())
 sys.modules.setdefault("transformers", MagicMock())
 sys.modules.setdefault("torch",        MagicMock())
 sys.modules.setdefault("newsapi",      MagicMock())
-sys.modules.setdefault("crewai",       MagicMock())
 
 import backend.utils.scheduler as scheduler_mod  # noqa: E402
 
@@ -134,34 +133,34 @@ _MOCK_OPPORTUNITIES = [
 
 
 class TestJobDailyMarketScan:
-    def test_calls_market_scan_crew(self):
-        with patch("backend.agents.crew_orchestrator.MarketScanCrew") as mock_crew_cls, \
+    def test_calls_market_scan_graph(self):
+        with patch("backend.agents.analysis_graph.MarketScanGraph") as mock_graph_cls, \
              patch("backend.database.connection.db_session") as mock_db_ctx, \
              patch("backend.models.market_opportunity.MarketOpportunity"):
-            mock_crew = MagicMock()
-            mock_crew.scan.return_value = []
-            mock_crew_cls.return_value = mock_crew
+            mock_graph = MagicMock()
+            mock_graph.scan.return_value = {"opportunities": [], "market_narrative": ""}
+            mock_graph_cls.return_value = mock_graph
             mock_db_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_db_ctx.return_value.__exit__ = MagicMock(return_value=False)
             scheduler_mod._job_daily_market_scan()
-        mock_crew.scan.assert_called_once()
+        mock_graph.scan.assert_called_once()
 
     def test_persists_each_opportunity(self):
         mock_db = MagicMock()
-        with patch("backend.agents.crew_orchestrator.MarketScanCrew") as mock_crew_cls, \
+        with patch("backend.agents.analysis_graph.MarketScanGraph") as mock_graph_cls, \
              patch("backend.database.connection.db_session") as mock_db_ctx, \
              patch("backend.models.market_opportunity.MarketOpportunity") as mock_opp_cls:
-            mock_crew = MagicMock()
-            mock_crew.scan.return_value = _MOCK_OPPORTUNITIES
-            mock_crew_cls.return_value = mock_crew
+            mock_graph = MagicMock()
+            mock_graph.scan.return_value = {"opportunities": _MOCK_OPPORTUNITIES, "market_narrative": ""}
+            mock_graph_cls.return_value = mock_graph
             mock_db_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_db_ctx.return_value.__exit__ = MagicMock(return_value=False)
             scheduler_mod._job_daily_market_scan()
         assert mock_db.add.call_count == len(_MOCK_OPPORTUNITIES)
 
     def test_exception_logged_not_raised(self):
-        with patch("backend.agents.crew_orchestrator.MarketScanCrew") as mock_crew_cls:
-            mock_crew_cls.return_value.scan.side_effect = RuntimeError("network down")
+        with patch("backend.agents.analysis_graph.MarketScanGraph") as mock_graph_cls:
+            mock_graph_cls.return_value.scan.side_effect = RuntimeError("network down")
             scheduler_mod._job_daily_market_scan()  # must not raise
 
 

@@ -13,12 +13,10 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
 from sqlalchemy.orm import Session
 
+from backend.agents.backtest_graph import BacktestNarrativeGraph
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.backtest_result import BacktestResult as BacktestResultModel
 from backend.services.backtesting_service import BacktestParameters, BacktestingService
@@ -28,11 +26,14 @@ router = APIRouter(tags=["Backtesting"])
 logger = get_logger(__name__)
 
 _bt = BacktestingService()
+_btng = BacktestNarrativeGraph()
+
+_TICKER_PATTERN = r"^[A-Za-z0-9.\-]{1,10}$"
 
 
 class BacktestRequest(BaseModel):
     """Request body for the /backtest endpoint."""
-    ticker: str = Field(..., min_length=1, max_length=10, description="Stock ticker symbol")
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=_TICKER_PATTERN, description="Stock ticker symbol")
     period: str = Field(default="2y", description="Historical data window")
     rsi_buy_threshold: float = Field(default=35.0, ge=5, le=50)
     rsi_sell_threshold: float = Field(default=70.0, ge=50, le=95)
@@ -76,6 +77,8 @@ async def run_backtest(
         logger.error("Backtest failed for %s: %s", ticker, exc)
         raise HTTPException(status_code=500, detail="Backtest failed. Please try again later.") from exc
 
+    narrative = await asyncio.to_thread(_btng.run, result)
+
     # Persist
     try:
         db_result = BacktestResultModel(
@@ -91,10 +94,12 @@ async def run_backtest(
             parameters=result.parameters,
             equity_curve=result.equity_curve,
             trade_log=result.trade_log,
+            narrative=narrative,
         )
         db.add(db_result)
-        db.commit()
+        db.flush()
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist backtest result: %s", exc)
 
     return {
@@ -115,4 +120,5 @@ async def run_backtest(
         },
         "equity_curve": result.equity_curve,
         "trade_log": result.trade_log,
+        "narrative": narrative,
     }

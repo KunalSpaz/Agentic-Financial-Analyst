@@ -127,8 +127,8 @@ with tab_paste:
                             )
                         else:
                             st.error(f"API error {resp.status_code}: {resp.json().get('detail', resp.text)}")
-                    except Exception as e:
-                        st.error(f"Connection error: {e}")
+                    except Exception:
+                        st.error("Cannot connect to the backend. Please check that it's running.")
 
     with col_help:
         st.markdown("### Tips")
@@ -223,8 +223,8 @@ with tab_file:
                         )
                     else:
                         st.error(f"API error {resp.status_code}: {resp.json().get('detail', resp.text)}")
-                except Exception as e:
-                    st.error(f"Connection error: {e}")
+                except Exception:
+                    st.error("Cannot connect to the backend. Please check that it's running.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -273,8 +273,8 @@ with tab_search:
                                     st.markdown(chunk)
                     else:
                         st.error(f"API error {resp.status_code}: {resp.text}")
-                except Exception as e:
-                    st.error(f"Connection error: {e}")
+                except Exception:
+                    st.error("Cannot connect to the backend. Please check that it's running.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -306,9 +306,9 @@ with tab_library:
                 else:
                     st.session_state["lib_docs"] = []
                     st.error(f"API error {resp.status_code}: {resp.text}")
-            except Exception as e:
+            except Exception:
                 st.session_state["lib_docs"] = []
-                st.error(f"Connection error: {e}")
+                st.error("Cannot connect to the backend. Please check that it's running.")
 
     docs = st.session_state.get("lib_docs", [])
 
@@ -327,21 +327,35 @@ with tab_library:
                     st.markdown("**Preview:**")
                     st.text(doc.get("content_preview", ""))
                 with col_action:
-                    if st.button(
-                        "🗑 Delete",
-                        key=f"del_{doc['id']}",
-                        help="Removes from DB. FAISS embeddings persist until index rebuild.",
-                    ):
-                        try:
-                            del_resp = httpx.delete(f"{api_url}/documents/{doc['id']}", timeout=10)
-                            if del_resp.status_code == 200:
-                                st.success(f"Deleted '{doc['title']}'")
-                                # Remove from session state and rerun
-                                st.session_state["lib_docs"] = [
-                                    d for d in st.session_state["lib_docs"] if d["id"] != doc["id"]
-                                ]
+                    confirm_key = f"confirm_del_{doc['id']}"
+                    if not st.session_state.get(confirm_key):
+                        if st.button(
+                            "🗑 Delete",
+                            key=f"del_{doc['id']}",
+                            help="Removes from DB. FAISS embeddings persist until index rebuild.",
+                        ):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
+                    else:
+                        st.warning("Delete this document? This cannot be undone.")
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("✅ Confirm", key=f"confirm_yes_{doc['id']}"):
+                                try:
+                                    del_resp = httpx.delete(f"{api_url}/documents/{doc['id']}", timeout=10)
+                                    if del_resp.status_code == 200:
+                                        st.success(f"Deleted '{doc['title']}'")
+                                        st.session_state["lib_docs"] = [
+                                            d for d in st.session_state["lib_docs"] if d["id"] != doc["id"]
+                                        ]
+                                    else:
+                                        st.error(f"Delete failed: {del_resp.text}")
+                                except Exception:
+                                    st.error("Cannot connect to the backend. Please check that it's running.")
+                                finally:
+                                    st.session_state.pop(confirm_key, None)
+                                    st.rerun()
+                        with col_no:
+                            if st.button("❌ Cancel", key=f"confirm_no_{doc['id']}"):
+                                st.session_state.pop(confirm_key, None)
                                 st.rerun()
-                            else:
-                                st.error(f"Delete failed: {del_resp.text}")
-                        except Exception as e:
-                            st.error(f"Connection error: {e}")

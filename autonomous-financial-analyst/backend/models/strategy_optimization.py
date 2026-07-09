@@ -5,7 +5,7 @@ ORM model for strategy optimization run results.
 """
 from __future__ import annotations
 import datetime
-from sqlalchemy import DateTime, Float, Integer, JSON, String, func
+from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.database.connection import Base
 
@@ -24,6 +24,7 @@ class StrategyOptimization(Base):
     best_drawdown: Mapped[float | None] = mapped_column(Float)
     iterations: Mapped[int | None] = mapped_column(Integer)
     all_results: Mapped[list | None] = mapped_column(JSON)
+    narrative: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

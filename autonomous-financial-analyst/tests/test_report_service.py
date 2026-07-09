@@ -20,7 +20,6 @@ sys.modules.setdefault("faiss",        MagicMock())
 sys.modules.setdefault("transformers", MagicMock())
 sys.modules.setdefault("torch",        MagicMock())
 sys.modules.setdefault("newsapi",      MagicMock())
-sys.modules.setdefault("crewai",       MagicMock())
 
 from backend.services.report_service import ReportService  # noqa: E402
 
@@ -157,6 +156,14 @@ class TestNarrative:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestEdgeInputs:
+    def test_none_change_pct_does_not_crash(self, service):
+        """yfinance frequently omits regularMarketChangePercent, leaving
+        change_pct present-but-None — the prompt-building f-string must not
+        crash trying to format None with :.2f."""
+        indices_with_none = {"SPY": {"price": 450.0, "change_pct": None}}
+        result = service.generate_daily_briefing(SAMPLE_OPPS, indices_with_none, SAMPLE_NEWS)
+        assert isinstance(result["narrative"], str)
+
     def test_empty_news_does_not_crash(self, service):
         result = service.generate_daily_briefing(SAMPLE_OPPS, SAMPLE_INDICES, [])
         assert isinstance(result["narrative"], str)

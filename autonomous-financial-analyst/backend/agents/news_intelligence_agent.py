@@ -1,36 +1,49 @@
 """
 news_intelligence_agent.py
 --------------------------
-CrewAI News Intelligence Agent — retrieves and summarises financial news.
+LangGraph News Intelligence node — synthesises raw news headlines into
+structured intelligence as part of the stock-analysis fan-out.
 """
 from __future__ import annotations
-from crewai import Agent
-from backend.utils.config import settings
+
+from typing import Callable, Dict
+
+from backend.agents.llm import get_chat_model
+from backend.agents.prompts import build_prompt, wrap_untrusted
+from backend.agents.state import StockAnalysisState
+
+ROLE = "Financial News Intelligence Analyst"
+GOAL = (
+    "Retrieve the latest relevant financial news articles for a given stock "
+    "or market event. Summarise key developments, identify material events "
+    "(earnings, M&A, regulatory actions), and flag sentiment-relevant headlines."
+)
+BACKSTORY = (
+    "You are a veteran financial journalist turned AI analyst. You have "
+    "an expert eye for distinguishing material news from noise, and you "
+    "can rapidly synthesise dozens of articles into actionable intelligence."
+)
 
 
-def create_news_intelligence_agent() -> Agent:
-    """
-    Instantiate the News Intelligence Agent.
+def create_news_intelligence_node() -> Callable[[StockAnalysisState], Dict[str, str]]:
+    """Build the LangGraph node function for the News Intelligence agent."""
+    llm = get_chat_model()
 
-    Retrieves financial news from multiple sources and produces structured
-    summaries of relevant articles per ticker.
+    def node(state: StockAnalysisState) -> Dict[str, str]:
+        ticker = state.get("ticker", "")
+        articles = state.get("articles") or []
+        articles_text = "\n".join(
+            f"- {a.get('title', 'N/A')} [{a.get('source', 'Unknown')}]"
+            for a in articles[:15]
+        ) or "No news articles available."
+        task = (
+            f"Analyse the following news headlines for {ticker}. "
+            "Identify material events (earnings beats/misses, M&A, regulatory actions, "
+            "executive changes), any conflicting signals, and overall sentiment direction. "
+            "Rank headlines by investment relevance.\n\n"
+            f"{wrap_untrusted('news_headlines', articles_text)}"
+        )
+        response = llm.invoke(build_prompt(ROLE, GOAL, BACKSTORY, task))
+        return {"news_insight": response.content}
 
-    Returns:
-        Configured :class:`crewai.Agent` instance.
-    """
-    return Agent(
-        role="Financial News Intelligence Analyst",
-        goal=(
-            "Retrieve the latest relevant financial news articles for a given stock "
-            "or market event. Summarise key developments, identify material events "
-            "(earnings, M&A, regulatory actions), and flag sentiment-relevant headlines."
-        ),
-        backstory=(
-            "You are a veteran financial journalist turned AI analyst. You have "
-            "an expert eye for distinguishing material news from noise, and you "
-            "can rapidly synthesise dozens of articles into actionable intelligence."
-        ),
-        verbose=True,
-        allow_delegation=False,
-        llm=settings.openai_model,
-    )
+    return node

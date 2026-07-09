@@ -13,13 +13,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import httpx
+import pandas as pd
 import streamlit as st
 
 from components.charts import candlestick_chart, rsi_chart, macd_chart
 from components.metrics import confidence_gauge, recommendation_badge
 from components.sidebar import render_sidebar
-from backend.services.market_data_service import MarketDataService
-from backend.services.technical_analysis_service import TechnicalAnalysisService
 
 st.set_page_config(page_title="Stock Analysis", page_icon="🔍", layout="wide")
 api_url = render_sidebar()
@@ -36,7 +35,7 @@ with col_analyze:
     run_analysis = st.button("🤖 Run AI Analysis", type="primary", use_container_width=True)
 
 if run_analysis and ticker:
-    with st.spinner(f"Running 8-agent CrewAI analysis for {ticker}… (this may take 1–2 minutes)"):
+    with st.spinner(f"Running 8-agent LangGraph analysis for {ticker}… (this may take 1–2 minutes)"):
         try:
             resp = httpx.post(
                 f"{api_url}/analyze-stock",
@@ -48,9 +47,9 @@ if run_analysis and ticker:
                 st.session_state["analysis_result"] = result
                 st.session_state["analysis_ticker"] = ticker
             else:
-                st.error(f"API error {resp.status_code}: {resp.text}")
-        except Exception as e:
-            st.error(f"Connection error: {e}")
+                st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+        except Exception:
+            st.error("Cannot connect to the backend. Please check that it's running.")
 
 if "analysis_result" in st.session_state and st.session_state.get("analysis_ticker") == ticker:
     result = st.session_state["analysis_result"]
@@ -76,12 +75,12 @@ if "analysis_result" in st.session_state and st.session_state.get("analysis_tick
     with col_gauge:
         st.subheader("Confidence Score")
         fig_gauge = confidence_gauge(
-            score=result["confidence_score"],
-            recommendation=result["recommendation"],
+            score=result.get("confidence_score", 50.0),
+            recommendation=result.get("recommendation", "HOLD"),
             color=result.get("confidence_color", "#2196F3"),
         )
         st.plotly_chart(fig_gauge, use_container_width=True)
-        recommendation_badge(result["recommendation"], result.get("confidence_color", "#2196F3"))
+        recommendation_badge(result.get("recommendation", "HOLD"), result.get("confidence_color", "#2196F3"))
 
     with col_signals:
         st.subheader("Technical Signals")
@@ -101,25 +100,41 @@ if "analysis_result" in st.session_state and st.session_state.get("analysis_tick
     st.divider()
     st.subheader("📈 Price Chart")
 
-    # Load live chart data directly
-    try:
-        mds = MarketDataService()
-        tas = TechnicalAnalysisService()
-        df = mds.get_historical_data(ticker, period=period)
-        if not df.empty:
-            df = tas.compute_indicators(df)
-            show_bb = st.checkbox("Show Bollinger Bands", value=False)
-            st.plotly_chart(
-                candlestick_chart(df, ticker, show_volume=True, show_ma=True, show_bb=show_bb),
-                use_container_width=True,
+    history_cache_key = ("history_data", ticker, period)
+    if st.session_state.get("history_cache_key") != history_cache_key:
+        try:
+            hist_resp = httpx.get(
+                f"{api_url}/stock/{ticker}/history",
+                params={"period": period},
+                timeout=30,
             )
-            c_rsi, c_macd = st.columns(2)
-            with c_rsi:
-                st.plotly_chart(rsi_chart(df), use_container_width=True)
-            with c_macd:
-                st.plotly_chart(macd_chart(df), use_container_width=True)
-    except Exception as e:
-        st.warning(f"Could not load chart data: {e}")
+            if hist_resp.status_code == 200:
+                records = hist_resp.json().get("data", [])
+                df = pd.DataFrame(records)
+                if not df.empty:
+                    df["date"] = pd.to_datetime(df["date"])
+                    df = df.set_index("date")
+                st.session_state["history_df"] = df
+            else:
+                st.session_state["history_df"] = pd.DataFrame()
+                st.warning(f"Could not load chart data (status {hist_resp.status_code}).")
+        except Exception:
+            st.session_state["history_df"] = pd.DataFrame()
+            st.warning("Could not load chart data — cannot connect to the backend.")
+        st.session_state["history_cache_key"] = history_cache_key
+
+    df = st.session_state.get("history_df", pd.DataFrame())
+    if not df.empty:
+        show_bb = st.checkbox("Show Bollinger Bands", value=False)
+        st.plotly_chart(
+            candlestick_chart(df, ticker, show_volume=True, show_ma=True, show_bb=show_bb),
+            use_container_width=True,
+        )
+        c_rsi, c_macd = st.columns(2)
+        with c_rsi:
+            st.plotly_chart(rsi_chart(df), use_container_width=True)
+        with c_macd:
+            st.plotly_chart(macd_chart(df), use_container_width=True)
 
     st.divider()
     st.subheader("📄 AI Analysis Report")

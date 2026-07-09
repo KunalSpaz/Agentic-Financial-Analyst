@@ -14,13 +14,10 @@ import asyncio
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
-limiter = Limiter(key_func=get_remote_address)
-
-from backend.agents.crew_orchestrator import MarketScanCrew
+from backend.agents.analysis_graph import MarketScanGraph
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.market_opportunity import MarketOpportunity
 from backend.services.market_data_service import MarketDataService
@@ -96,28 +93,39 @@ async def get_top_news(request: Request, limit: int = 20) -> List[Dict[str, Any]
     return articles
 
 
-@router.get("/market-opportunities", response_model=List[Dict[str, Any]])
-@limiter.limit("10/minute")
+@router.get("/market-opportunities", response_model=Dict[str, Any])
+@limiter.limit("3/minute")  # refresh=true can trigger up to 10 full LLM analysis pipelines
 async def get_market_opportunities(
     request: Request,
     refresh: bool = False,
     db: Session = Depends(get_db),
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     Return ranked investment opportunities from the last market scan.
 
     Args:
         refresh: If ``true``, re-run the full opportunity scan before returning.
-                 This can take several minutes.
+                 This can take several minutes and triggers up to
+                 ``len(stock_universe)`` full LLM analysis pipelines, so it is
+                 rate-limited more tightly than a cached read (see the
+                 ``@limiter.limit`` decorator below).
+
+    Returns:
+        Dict with ``opportunities`` (ranked list) and ``market_narrative``
+        (thematic summary — only populated on a fresh ``refresh=true`` scan;
+        cached reads don't persist the narrative, so it's empty there).
     """
     if refresh:
         logger.info("Refreshing market opportunities scan…")
-        crew = MarketScanCrew()
+        graph = MarketScanGraph()
         try:
-            opportunities = await asyncio.to_thread(crew.scan)
+            scan_result = await asyncio.to_thread(graph.scan)
         except Exception as exc:
             logger.error("Market scan failed: %s", exc)
             raise HTTPException(status_code=500, detail="Market scan failed. Please try again later.") from exc
+
+        opportunities = scan_result["opportunities"]
+        market_narrative = scan_result.get("market_narrative", "")
 
         # Persist
         try:
@@ -132,11 +140,12 @@ async def get_market_opportunities(
                     rationale=opp.get("rationale", ""),
                 )
                 db.add(db_opp)
-            db.commit()
+            db.flush()
         except Exception as exc:
+            db.rollback()
             logger.warning("Failed to persist opportunities: %s", exc)
 
-        return opportunities
+        return {"opportunities": opportunities, "market_narrative": market_narrative}
 
     # Return cached results
     db_opps = (
@@ -146,16 +155,19 @@ async def get_market_opportunities(
         .all()
     )
 
-    return [
-        {
-            "rank": o.rank,
-            "ticker": o.ticker,
-            "recommendation": o.recommendation,
-            "confidence_score": o.confidence_score,
-            "current_price": o.current_price,
-            "sector": o.sector,
-            "rationale": o.rationale,
-            "scan_date": str(o.scan_date),
-        }
-        for o in db_opps
-    ]
+    return {
+        "opportunities": [
+            {
+                "rank": o.rank,
+                "ticker": o.ticker,
+                "recommendation": o.recommendation,
+                "confidence_score": o.confidence_score,
+                "current_price": o.current_price,
+                "sector": o.sector,
+                "rationale": o.rationale,
+                "scan_date": str(o.scan_date),
+            }
+            for o in db_opps
+        ],
+        "market_narrative": "",
+    }

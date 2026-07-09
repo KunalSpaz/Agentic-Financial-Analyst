@@ -6,29 +6,26 @@ Retrieves financial news articles from NewsAPI.
 
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List, Optional
 
 from newsapi import NewsApiClient
 
+from backend.utils.cache import TTLCache
 from backend.utils.config import settings
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_cache: Dict[str, tuple[float, Any]] = {}
 _CACHE_TTL = 600  # 10 minutes
+_cache = TTLCache(ttl_seconds=_CACHE_TTL)
 
 
-def _cache_get(key: str) -> Optional[Any]:
-    entry = _cache.get(key)
-    if entry and (time.time() - entry[0]) < _CACHE_TTL:
-        return entry[1]
-    return None
+def _cache_get(key: str) -> Any:
+    return _cache.get(key)
 
 
 def _cache_set(key: str, value: Any) -> None:
-    _cache[key] = (time.time(), value)
+    _cache.set(key, value)
 
 
 class NewsService:

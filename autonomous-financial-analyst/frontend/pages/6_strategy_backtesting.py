@@ -35,28 +35,31 @@ with col3:
     ma_filter = st.checkbox("MA200 Filter (only buy above SMA200)", value=True)
 
 if st.button("▶ Run Backtest", type="primary"):
-    with st.spinner(f"Running backtest for {ticker}…"):
-        try:
-            resp = httpx.post(
-                f"{api_url}/backtest",
-                json={
-                    "ticker": ticker,
-                    "period": period,
-                    "rsi_buy_threshold": rsi_buy,
-                    "rsi_sell_threshold": rsi_sell,
-                    "macd_confirmation": macd_confirm,
-                    "ma_filter": ma_filter,
-                    "initial_capital": float(initial_capital),
-                    "sentiment_label": sentiment,
-                },
-                timeout=120,
-            )
-            if resp.status_code == 200:
-                st.session_state["backtest_result"] = resp.json()
-            else:
-                st.error(f"API error: {resp.text}")
-        except Exception as e:
-            st.error(f"Connection error: {e}")
+    if not ticker:
+        st.warning("Please enter a ticker symbol.")
+    else:
+        with st.spinner(f"Running backtest for {ticker}…"):
+            try:
+                resp = httpx.post(
+                    f"{api_url}/backtest",
+                    json={
+                        "ticker": ticker,
+                        "period": period,
+                        "rsi_buy_threshold": rsi_buy,
+                        "rsi_sell_threshold": rsi_sell,
+                        "macd_confirmation": macd_confirm,
+                        "ma_filter": ma_filter,
+                        "initial_capital": float(initial_capital),
+                        "sentiment_label": sentiment,
+                    },
+                    timeout=120,
+                )
+                if resp.status_code == 200:
+                    st.session_state["backtest_result"] = resp.json()
+                else:
+                    st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+            except Exception:
+                st.error("Cannot connect to the backend. Please check that it's running.")
 
 if "backtest_result" in st.session_state:
     bt = st.session_state["backtest_result"]
@@ -93,3 +96,8 @@ if "backtest_result" in st.session_state:
         if trade_log:
             import pandas as pd
             st.dataframe(pd.DataFrame(trade_log), use_container_width=True)
+
+    if bt.get("narrative"):
+        st.divider()
+        st.subheader("🧠 AI Strategy Assessment")
+        st.markdown(bt["narrative"])

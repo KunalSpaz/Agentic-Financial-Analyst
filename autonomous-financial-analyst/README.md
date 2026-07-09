@@ -1,6 +1,6 @@
 # Autonomous Financial Analyst
 
-An AI-powered financial intelligence platform combining a **12-agent CrewAI pipeline** with deterministic Python services for technical analysis, NLP sentiment analysis (FinBERT), RAG document intelligence, backtesting, portfolio risk, and strategy optimisation — all served through a FastAPI backend and an interactive Streamlit dashboard.
+An AI-powered financial intelligence platform combining a **12-agent LangGraph pipeline** with deterministic Python services for technical analysis, NLP sentiment analysis (FinBERT), RAG document intelligence, backtesting, portfolio risk, and strategy optimisation — all served through a FastAPI backend and an interactive Streamlit dashboard.
 
 ---
 
@@ -12,7 +12,7 @@ An AI-powered financial intelligence platform combining a **12-agent CrewAI pipe
 - [Project Structure](#project-structure)
 - [Backend](#backend)
   - [Services](#services)
-  - [CrewAI Agents](#crewai-agents)
+  - [LangGraph Agents](#langgraph-agents)
   - [API Endpoints](#api-endpoints)
   - [Database](#database)
   - [Utilities](#utilities)
@@ -47,13 +47,16 @@ Python Service Layer  ─── deterministic computation, no LLM
   ReportService          → GPT-4o daily market briefings
           │
           ▼
-CrewAI Intelligence Layer  ─── LLM reasoning & synthesis (12 agents)
-  6 active agents in the stock analysis crew (sequential)
-  6 specialist agents (market data, news, technical, sentiment, backtesting,
-    opportunity scanner, portfolio risk, strategy optimisation, report writer)
+LangGraph Intelligence Layer  ─── LLM reasoning & synthesis (12 agents)
+  8-node fan-out/fan-in stock analysis graph: market data, technical,
+    sentiment, news, and document-intelligence nodes run in parallel and
+    feed a financial-analysis node → investment-decision node → report-writer
+  4 more agents run as single-node narrative graphs wired directly into
+    their corresponding route: backtesting, portfolio risk, strategy
+    optimisation, and opportunity-scanner (market-scan synthesis)
           │
           ▼
-FastAPI Backend  ─── 19 REST endpoints + APScheduler (daily jobs at 08:00 ET)
+FastAPI Backend  ─── 20 REST endpoints + APScheduler (daily jobs at 08:00 ET)
           │
           ▼
 Streamlit Dashboard  ─── 9 interactive pages
@@ -64,7 +67,7 @@ Streamlit Dashboard  ─── 9 interactive pages
 The system separates **computation** from **reasoning**:
 
 - **Python services** handle everything deterministic — fetching OHLCV data, computing RSI/MACD/Bollinger Bands via pandas-ta, running FinBERT inference, executing backtest loops, and calculating VaR/Sharpe/beta. These produce reliable, reproducible numbers.
-- **CrewAI agents** handle everything interpretive — synthesising pre-fetched data into structured intelligence, explaining what a combination of signals means, weighing risks, and writing the final investment narrative. These are pure reasoning tasks where LLMs add genuine value.
+- **LangGraph agents** handle everything interpretive — synthesising pre-fetched data into structured intelligence, explaining what a combination of signals means, weighing risks, and writing the final investment narrative. Every agent is wired into a real graph node that reasons over its corresponding service's output — there is no unused scaffolding. These are pure reasoning tasks where LLMs add genuine value.
 
 Asking an LLM to "fetch a stock quote" or "compute RSI" produces hallucinated numbers. Asking it to "interpret what RSI=28 combined with a MACD bullish divergence means for an entry decision" produces useful insight.
 
@@ -74,7 +77,7 @@ Asking an LLM to "fetch a stock quote" or "compute RSI" produces hallucinated nu
 
 | Feature | Details |
 |---|---|
-| **12-Agent CrewAI Pipeline** | Sequential 6-agent stock analysis crew + 6 specialist agents for market data, news, sentiment, backtesting, portfolio risk, and optimisation |
+| **12-Agent LangGraph Pipeline** | 8-node fan-out/fan-in stock analysis graph + 4 single-node narrative graphs wired into backtesting, portfolio risk, strategy optimisation, and opportunity scanning |
 | **AI Chatbot** | GPT-4o conversational analyst grounded in live market data + RAG document context |
 | **Technical Indicators** | RSI(14), MACD(12/26/9), SMA(50/200), Bollinger Bands(20,2σ), Volume ratio |
 | **FinBERT Sentiment** | ProsusAI/finbert — POSITIVE / NEUTRAL / NEGATIVE classification per article, aggregated compound score |
@@ -98,7 +101,7 @@ Asking an LLM to "fetch a stock quote" or "compute RSI" produces hallucinated nu
 
 ### Requirements
 
-- Python **3.10–3.13** (CrewAI does not support 3.14+)
+- Python **3.10–3.13**
 - OpenAI API key
 - NewsAPI key (optional — system degrades gracefully without it)
 
@@ -329,35 +332,35 @@ Generates GPT-4o daily market briefings. Wraps OpenAI call with tenacity retry (
 
 ---
 
-### CrewAI Agents
+### LangGraph Agents
 
-All 12 agents are defined as factory functions in `backend/agents/`. Each is instantiated fresh per request inside the crew orchestrator. All use `settings.openai_model` for the LLM.
+All 12 agents are defined as `create_*_node()` factory functions in `backend/agents/`, each building a `ChatOpenAI` instance (`settings.openai_model`) and returning a LangGraph node closure. Every agent is wired into a real graph — none are unused scaffolding.
 
-#### Stock Analysis Crew (6 agents, sequential)
+#### Stock Analysis Graph (8 agents, fan-out → fan-in)
 
-When `/analyze-stock` is called, these agents run in series, each receiving the output of the previous:
+When `/analyze-stock` is called, five agents run in parallel over the deterministic pipeline's output, then three run in sequence to synthesise a final report:
 
 | # | Agent | Role | What it produces |
 |---|---|---|---|
-| 1 | `DocumentIntelligenceAgent` | Financial document analyst | Key themes and signals extracted from RAG-retrieved document chunks |
-| 2 | `NewsIntelligenceAgent` | News intelligence specialist | Structured intelligence: material events, sentiment direction, risk flags, contradictions |
-| 3 | `TechnicalAnalysisAgent` | Technical analysis expert | Narrative interpretation of RSI, MACD, SMA, Bollinger Band combinations and divergences |
-| 4 | `FinancialAnalysisAgent` | Senior financial analyst | Unified assessment synthesising document intelligence, news, and technical signals |
-| 5 | `InvestmentDecisionAgent` | Portfolio manager | Confirmed recommendation with investment rationale, entry conditions, and risk factors |
-| 6 | `ReportWriterAgent` | Financial report writer | Final investment report in structured markdown ready for display |
+| 1 | `MarketDataAgent` *(parallel)* | Market data specialist | Data-quality read on the live quote/OHLCV snapshot (missing fields, 52-week range context) |
+| 2 | `TechnicalAnalysisAgent` *(parallel)* | Technical analysis expert | Narrative interpretation of RSI, MACD, SMA, Bollinger Band combinations and divergences |
+| 3 | `SentimentAnalysisAgent` *(parallel)* | Financial sentiment analyst | Interpretation of the FinBERT-derived compound sentiment score and label |
+| 4 | `NewsIntelligenceAgent` *(parallel)* | News intelligence specialist | Structured intelligence: material events, sentiment direction, risk flags, contradictions |
+| 5 | `DocumentIntelligenceAgent` *(parallel)* | Financial document analyst | Key themes and signals extracted from RAG-retrieved document chunks |
+| 6 | `FinancialAnalysisAgent` *(fan-in)* | Senior financial analyst | Unified assessment synthesising all five parallel outputs |
+| 7 | `InvestmentDecisionAgent` | Portfolio manager | Confirmed recommendation with investment rationale, entry conditions, and risk factors |
+| 8 | `ReportWriterAgent` | Financial report writer | Final investment report in structured markdown ready for display |
 
-#### Specialist Agents (6 agents)
+#### Narrative Graphs (4 agents, one per route)
 
-Used in other crew contexts (market scan, portfolio analysis, etc.):
+Each wraps a single reasoning node that interprets the output of its corresponding deterministic service, adding a `narrative` field to that endpoint's response:
 
-| Agent | Purpose |
-|---|---|
-| `MarketDataAgent` | Fetches and validates OHLCV data for downstream agents |
-| `SentimentAnalysisAgent` | Aggregates and contextualises sentiment scores |
-| `OpportunityScannerAgent` | Ranks tickers by opportunity signal strength |
-| `PortfolioRiskAgent` | Interprets risk metric outputs in portfolio context |
-| `BacktestingAgent` | Interprets backtest results and suggests parameter refinements |
-| `StrategyOptimisationAgent` | Recommends optimal strategy parameters from grid-search results |
+| Agent | Wired into | Purpose |
+|---|---|---|
+| `OpportunityScannerAgent` | `GET /market-opportunities?refresh=true` | Thematic/sector-clustering synthesis over the full ranked opportunity list |
+| `BacktestingAgent` | `POST /backtest` | Interprets return/Sharpe/drawdown/win-rate, flags overfitting risk |
+| `PortfolioRiskAgent` | `POST /portfolio-analysis` | Plain-language risk read + diversification recommendations |
+| `StrategyOptimisationAgent` | `POST /optimize-strategy` | Explains parameter tradeoffs and data-snooping caution |
 
 ---
 
@@ -369,11 +372,12 @@ All endpoints require `X-API-Key` header if `API_SECRET_KEY` is set in the envir
 
 | Method | Endpoint | Rate Limit | Description |
 |---|---|---|---|
-| `POST` | `/analyze-stock` | 5/min | Full pipeline: live data → indicators → sentiment → 6-agent CrewAI narrative |
-| `GET` | `/stock/{ticker}` | 30/min | Live quote + latest cached analysis from DB |
+| `POST` | `/analyze-stock` | 5/min | Full pipeline: live data → indicators → sentiment → 8-agent LangGraph narrative |
+| `GET` | `/stock/{ticker}` | 60/min | Live quote + latest cached analysis from DB |
+| `GET` | `/stock/{ticker}/history` | 60/min | OHLCV + computed indicators as JSON (used by the frontend price chart) |
 | `GET` | `/market-report` | 10/min | AI-generated daily market briefing (cached in DB) |
-| `GET` | `/top-news` | 20/min | Top financial headlines with optional `limit` param |
-| `GET` | `/market-opportunities` | 10/min | Ranked opportunity scanner results; `?refresh=true` re-runs crew |
+| `GET` | `/top-news` | 30/min | Top financial headlines with optional `limit` param |
+| `GET` | `/market-opportunities` | 3/min | Ranked opportunity scanner results + `market_narrative`; `?refresh=true` re-runs the scan graph (up to 10 full LLM pipelines, hence the tighter limit) |
 
 **`POST /analyze-stock` request body:**
 ```json
@@ -447,7 +451,7 @@ All endpoints require `X-API-Key` header if `API_SECRET_KEY` is set in the envir
 
 | Table | Purpose | Populated by |
 |---|---|---|
-| `analysis_reports` | Full stock analysis results with CrewAI narrative | `POST /analyze-stock` |
+| `analysis_reports` | Full stock analysis results with LangGraph narrative | `POST /analyze-stock` |
 | `market_opportunities` | Ranked opportunity scanner results | `GET /market-opportunities` + daily scheduler |
 | `financial_documents` | Document metadata for RAG library | `POST /documents/ingest*` |
 | `backtest_results` | Backtest metrics, equity curve, trade log | `POST /backtest` |
@@ -480,6 +484,9 @@ APScheduler `BackgroundScheduler` with two daily jobs fired at `DAILY_REPORT_HOU
 1. **Daily Market Scan** — runs the opportunity scanner over the full stock universe and persists to DB
 2. **Daily AI Market Briefing** — calls `ReportService` to generate and cache a GPT-4o market briefing
 
+#### `cache.py`
+Small bounded, thread-safe `TTLCache` (per-entry expiry + oldest-first eviction once past a max entry count) used by `MarketDataService` and `NewsService` to wrap yfinance/NewsAPI calls — replaces the raw dict TTL cache pattern, which never evicted expired entries and grew unbounded for the life of the process.
+
 ---
 
 ## Frontend
@@ -496,11 +503,11 @@ Full AI analysis pipeline for any ticker. Displays:
 - Candlestick chart with SMA/Bollinger overlays
 - RSI chart with overbought/oversold zones
 - MACD chart with histogram
-- Full 6-agent CrewAI narrative report in markdown
+- Full 8-agent LangGraph narrative report in markdown
 - Results cached in `session_state["analysis_result"]` — no re-run on widget change
 
 #### 3 — Opportunity Scanner (`3_opportunity_scanner.py`)
-Ranks all tickers in the stock universe by confidence score. Shows a horizontal bar chart coloured by recommendation, plus a sortable data table. Optional `Refresh` button re-runs the full crew scan.
+Ranks all tickers in the stock universe by confidence score. Shows the market-narrative synthesis, a horizontal bar chart coloured by recommendation, and a sortable data table. Optional `Refresh` button re-runs the full scan graph.
 
 #### 4 — Daily Market Report (`4_daily_market_report.py`)
 Displays the AI-generated daily briefing with market indices, narrative text, top picks, and sentiment. One-click "Regenerate" forces a fresh briefing.
@@ -585,13 +592,14 @@ pytest tests/ --cov=backend --cov=frontend --cov-report=term-missing
 pytest tests/test_backtesting_service.py -v
 ```
 
-**516 tests across 20 files — all passing.**
+**553 tests across 23 files — all passing.**
 
 | Test File | Coverage |
 |---|---|
-| `test_agents.py` | All 12 agent factory functions — role, goal, backstory, tool config |
-| `test_crew_orchestrator.py` | Task graph wiring, successful kickoff, result propagation |
-| `test_api_routes.py` | All 19 endpoints — happy path, validation errors, auth, rate limiting, security headers |
+| `test_agents.py` | All 12 LangGraph node factories — persona constants, output key, prompt-injection delimiting |
+| `test_analysis_graph.py` | StockAnalysisGraph pipeline + fallback narrative, MarketScanGraph ranking + market narrative |
+| `test_backtest_graph.py` / `test_portfolio_graph.py` / `test_optimization_graph.py` | The three single-node narrative graphs — narrative propagation, fallback on failure |
+| `test_api_routes.py` | All 20 endpoints — happy path, validation errors, auth, rate limiting, security headers |
 | `test_market_routes.py` | Market report, top news, opportunity scanner — caching, refresh, sentiment defaults |
 | `test_chat_routes.py` | Chat endpoint — RAG context, history payload, error handling |
 | `test_rag_routes.py` | Document ingest, file upload, search, list, delete |

@@ -4,8 +4,9 @@ stock_routes.py
 FastAPI routes for individual stock analysis.
 
 Endpoints:
-    POST /analyze-stock   — Run full CrewAI analysis pipeline for a ticker
-    GET  /stock/{ticker}  — Get quote + cached analysis for a ticker
+    POST /analyze-stock          — Run full LangGraph analysis pipeline for a ticker
+    GET  /stock/{ticker}         — Get quote + cached analysis for a ticker
+    GET  /stock/{ticker}/history — Get OHLCV + computed indicators as JSON
 """
 from __future__ import annotations
 
@@ -15,29 +16,30 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
-limiter = Limiter(key_func=get_remote_address)
-
-from backend.agents.crew_orchestrator import StockAnalysisCrew
+from backend.agents.analysis_graph import StockAnalysisGraph
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.analysis_report import AnalysisReport
 from backend.models.user_query import UserQuery
 from backend.services.market_data_service import MarketDataService
+from backend.services.technical_analysis_service import TechnicalAnalysisService
 from backend.utils.logger import get_logger
 
 router = APIRouter(tags=["Stock Analysis"])
 logger = get_logger(__name__)
 
 _mds = MarketDataService()
-_crew = StockAnalysisCrew()
+_tas = TechnicalAnalysisService()
+_graph = StockAnalysisGraph()
+
+_TICKER_PATTERN = r"^[A-Za-z0-9.\-]{1,10}$"
 
 
 class AnalyzeStockRequest(BaseModel):
     """Request body for the /analyze-stock endpoint."""
-    ticker: str = Field(..., min_length=1, max_length=10, description="Stock ticker symbol, e.g. 'AAPL'")
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=_TICKER_PATTERN, description="Stock ticker symbol, e.g. 'AAPL'")
     period: str = Field(default="1y", description="Historical data period")
 
 
@@ -49,7 +51,7 @@ async def analyze_stock(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Run the complete 8-agent CrewAI analysis pipeline for the given ticker.
+    Run the complete 8-agent LangGraph analysis pipeline for the given ticker.
 
     Returns a full analysis including recommendation, confidence score,
     technical signals, sentiment, and a narrative report.
@@ -58,7 +60,7 @@ async def analyze_stock(
     start_ts = time.time()
 
     try:
-        result = await asyncio.to_thread(_crew.run, ticker)
+        result = await asyncio.to_thread(_graph.run, ticker)
     except Exception as exc:
         logger.error("Analysis failed for %s: %s", ticker, exc)
         raise HTTPException(status_code=500, detail="Analysis failed. Please try again later.") from exc
@@ -90,8 +92,9 @@ async def analyze_stock(
             latency_ms=latency_ms,
         )
         db.add(query_log)
-        db.commit()
+        db.flush()
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist analysis report: %s", exc)
 
     return result
@@ -131,3 +134,29 @@ async def get_stock(request: Request, ticker: str, db: Session = Depends(get_db)
         }
 
     return result
+
+
+@router.get("/stock/{ticker}/history", response_model=Dict[str, Any])
+@limiter.limit("60/minute")
+async def get_stock_history(
+    request: Request,
+    ticker: str,
+    period: str = "1y",
+) -> Dict[str, Any]:
+    """
+    Return OHLCV history + computed technical indicators for *ticker* as JSON.
+
+    Lets the frontend chart price/RSI/MACD/Bollinger Bands via the API
+    instead of importing backend services directly.
+    """
+    ticker = ticker.upper()
+    df = await asyncio.to_thread(_mds.get_historical_data, ticker, period=period)
+    if df.empty:
+        return {"ticker": ticker, "period": period, "data": []}
+
+    df = await asyncio.to_thread(_tas.compute_indicators, df)
+    records = df.reset_index().rename(columns={"index": "date", "Date": "date"})
+    records["date"] = records["date"].astype(str)
+    records = records.where(records.notna(), None)
+
+    return {"ticker": ticker, "period": period, "data": records.to_dict(orient="records")}

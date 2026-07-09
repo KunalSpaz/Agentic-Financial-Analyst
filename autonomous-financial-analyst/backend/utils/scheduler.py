@@ -29,12 +29,12 @@ def _job_daily_market_scan() -> None:
     """
     logger.info("Scheduler: Starting daily market scan…")
     try:
-        from backend.agents.crew_orchestrator import MarketScanCrew
+        from backend.agents.analysis_graph import MarketScanGraph
         from backend.database.connection import db_session
         from backend.models.market_opportunity import MarketOpportunity
 
-        crew = MarketScanCrew()
-        opportunities = crew.scan()
+        graph = MarketScanGraph()
+        opportunities = graph.scan()["opportunities"]
 
         with db_session() as db:
             for opp in opportunities:

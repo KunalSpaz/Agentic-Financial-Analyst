@@ -83,6 +83,8 @@ class BacktestingService:
         """
         if params is None:
             params = BacktestParameters()
+        if params.initial_capital <= 0:
+            raise ValueError("initial_capital must be greater than zero")
 
         df = self._mds.get_historical_data(ticker, period=period)
         if df.empty:

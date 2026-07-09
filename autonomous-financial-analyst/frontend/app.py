@@ -29,7 +29,7 @@ st.markdown(
     """
     ### AI-Powered Financial Intelligence Platform
 
-    This platform uses a **12-agent CrewAI system** to analyse financial markets,
+    This platform uses a **12-agent LangGraph system** to analyse financial markets,
     generate investment recommendations, and provide deep portfolio insights.
 
     ---

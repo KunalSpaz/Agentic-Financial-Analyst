@@ -117,11 +117,18 @@ class TechnicalAnalysisService:
             macd_hist is not None and macd_hist > 0 and
             float(prev.get("MACDh_12_26_9", 0) or 0) <= 0
         )
+        # Edge-triggered: true only on the day the MAs actually cross, not on
+        # every day the pair happens to sit in that configuration (matches
+        # the crossover-event semantics used by macd_bullish_crossover above).
+        prev_sma_50 = float(prev.get("SMA_50")) if pd.notna(prev.get("SMA_50", None)) else None
+        prev_sma_200 = float(prev.get("SMA_200")) if pd.notna(prev.get("SMA_200", None)) else None
         golden_cross = (
-            sma_50 is not None and sma_200 is not None and sma_50 > sma_200
+            sma_50 is not None and sma_200 is not None and sma_50 > sma_200 and
+            prev_sma_50 is not None and prev_sma_200 is not None and prev_sma_50 <= prev_sma_200
         )
         death_cross = (
-            sma_50 is not None and sma_200 is not None and sma_50 < sma_200
+            sma_50 is not None and sma_200 is not None and sma_50 < sma_200 and
+            prev_sma_50 is not None and prev_sma_200 is not None and prev_sma_50 >= prev_sma_200
         )
         above_bb_upper = close is not None and bb_upper is not None and close > bb_upper
         below_bb_lower = close is not None and bb_lower is not None and close < bb_lower

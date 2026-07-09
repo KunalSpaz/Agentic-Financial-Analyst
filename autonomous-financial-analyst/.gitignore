@@ -3,6 +3,8 @@
 
 # ── Data (SQLite DB + FAISS index — machine-local, not version-controlled) ────
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/*.idx
 data/*.meta
 # Keep the directory itself tracked

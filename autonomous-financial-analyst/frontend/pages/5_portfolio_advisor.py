@@ -21,15 +21,28 @@ st.subheader("📋 Portfolio Builder")
 
 default_portfolio = {"AAPL": 0.25, "MSFT": 0.25, "NVDA": 0.20, "AMZN": 0.15, "TSLA": 0.15}
 holdings: dict = {}
+entered_tickers: list = []
 
 for i, col in enumerate(st.columns(5)):
     with col:
         ticker = st.text_input(f"Ticker {i+1}", value=list(default_portfolio.keys())[i] if i < len(default_portfolio) else "")
         weight = st.number_input(f"Weight {i+1}", min_value=0.0, max_value=1.0, value=list(default_portfolio.values())[i] if i < len(default_portfolio) else 0.0, step=0.05)
         if ticker and weight > 0:
+            entered_tickers.append(ticker.upper())
             holdings[ticker.upper()] = weight
 
 period = st.selectbox("Historical Period", ["6mo", "1y", "2y"], index=1)
+
+duplicate_tickers = {t for t in entered_tickers if entered_tickers.count(t) > 1}
+if duplicate_tickers:
+    st.warning(
+        f"Duplicate ticker(s) entered: {', '.join(sorted(duplicate_tickers))} — "
+        "only the last weight for each will be used."
+    )
+
+weight_sum = sum(holdings.values())
+if holdings and not (0.98 <= weight_sum <= 1.02):
+    st.warning(f"Weights sum to {weight_sum:.2f}, not 1.00 — risk metrics assume a fully-invested portfolio.")
 
 if st.button("📊 Analyse Portfolio Risk", type="primary"):
     if not holdings:
@@ -46,9 +59,9 @@ if st.button("📊 Analyse Portfolio Risk", type="primary"):
                     risk = resp.json()
                     st.session_state["portfolio_risk"] = risk
                 else:
-                    st.error(f"API error: {resp.text}")
-            except Exception as e:
-                st.error(f"Connection error: {e}")
+                    st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+            except Exception:
+                st.error("Cannot connect to the backend. Please check that it's running.")
 
 if "portfolio_risk" in st.session_state:
     risk = st.session_state["portfolio_risk"]
@@ -75,3 +88,8 @@ if "portfolio_risk" in st.session_state:
         sector = risk.get("sector_exposure", {})
         if sector:
             st.plotly_chart(sector_pie_chart(sector), use_container_width=True)
+
+    if risk.get("narrative"):
+        st.divider()
+        st.subheader("🧠 AI Risk Assessment")
+        st.markdown(risk["narrative"])

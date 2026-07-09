@@ -29,9 +29,11 @@ class BacktestResult(Base):
     equity_curve: Mapped[list | None] = mapped_column(JSON)
     trade_log: Mapped[list | None] = mapped_column(JSON)
     notes: Mapped[str | None] = mapped_column(Text)
+    narrative: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
 
     def __repr__(self) -> str:
-        return f"<BacktestResult ticker={self.ticker} return={self.total_return:.2%}>"
+        ret = f"{self.total_return:.2%}" if self.total_return is not None else "N/A"
+        return f"<BacktestResult ticker={self.ticker} return={ret}>"

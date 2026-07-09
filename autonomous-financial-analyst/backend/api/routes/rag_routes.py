@@ -17,21 +17,18 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
 from sqlalchemy.orm import Session
 
+from backend.api.rate_limit import limiter
 from backend.database.connection import get_db
 from backend.models.financial_document import FinancialDocument
-from backend.services.rag_service import RAGService
+from backend.services.rag_service import get_rag_service
 from backend.utils.logger import get_logger
 
 router = APIRouter(prefix="/documents", tags=["Document Library"])
 logger = get_logger(__name__)
 
-_rag = RAGService()
+_rag = get_rag_service()
 
 _VALID_DOC_TYPES = {"earnings_transcript", "annual_report", "analyst_note", "news_article", "research_report", "other"}
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -87,10 +84,10 @@ async def ingest_document(
             faiss_indexed=True,
         )
         db.add(doc)
-        db.commit()
-        db.refresh(doc)
+        db.flush()
         doc_id = doc.id
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist document to DB: %s", exc)
         doc_id = None
 
@@ -164,10 +161,10 @@ async def ingest_file(
             faiss_indexed=True,
         )
         db.add(doc)
-        db.commit()
-        db.refresh(doc)
+        db.flush()
         doc_id = doc.id
     except Exception as exc:
+        db.rollback()
         logger.warning("Failed to persist document to DB: %s", exc)
         doc_id = None
 

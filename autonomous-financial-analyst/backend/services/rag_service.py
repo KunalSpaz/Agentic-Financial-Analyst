@@ -81,11 +81,17 @@ class RAGService:
         self._metadata = []
 
     def _save_index(self) -> None:
-        """Persist FAISS index and metadata to disk."""
+        """Persist FAISS index and metadata to disk atomically (write-temp + rename)."""
         os.makedirs(os.path.dirname(self._index_path) or ".", exist_ok=True)
-        faiss.write_index(self._index, f"{self._index_path}.idx")
-        with open(f"{self._index_path}.meta", "w", encoding="utf-8") as f:
+        idx_file = f"{self._index_path}.idx"
+        meta_file = f"{self._index_path}.meta"
+        idx_tmp = f"{idx_file}.tmp"
+        meta_tmp = f"{meta_file}.tmp"
+        faiss.write_index(self._index, idx_tmp)
+        with open(meta_tmp, "w", encoding="utf-8") as f:
             json.dump(self._metadata, f)
+        os.replace(idx_tmp, idx_file)
+        os.replace(meta_tmp, meta_file)
 
     # ------------------------------------------------------------------
     # Document ingestion
@@ -122,7 +128,14 @@ class RAGService:
             return 0
 
         with self._lock:
-            self._index.add(embeddings)
+            try:
+                self._index.add(embeddings)
+            except Exception as exc:
+                logger.error(
+                    "Failed to add embeddings to FAISS index (dimension mismatch? "
+                    "expected %d): %s", EMBEDDING_DIM, exc,
+                )
+                return 0
             self._metadata.extend(chunks)
             self._save_index()
             total = self._index.ntotal
@@ -159,6 +172,8 @@ class RAGService:
 
         context_parts = []
         for idx in indices[0]:
+            if idx == -1:
+                continue  # FAISS pads short result sets with -1 — not a real match
             if idx < len(metadata_snapshot):
                 meta = metadata_snapshot[idx]
                 text = meta.get("text", "")
@@ -206,3 +221,25 @@ class RAGService:
             chunks.append(text[start:end])
             start += CHUNK_SIZE - CHUNK_OVERLAP
         return chunks
+
+
+_rag_service: Optional["RAGService"] = None
+_rag_service_lock = threading.Lock()
+
+
+def get_rag_service() -> "RAGService":
+    """
+    Return the process-wide :class:`RAGService` singleton.
+
+    A single shared instance (and therefore a single in-memory index + lock)
+    is required for correctness: separate ``RAGService()`` instances each hold
+    their own copy of the FAISS index loaded at construction time, so
+    concurrent writers using different instances silently lose each other's
+    updates when both call ``_save_index()``.
+    """
+    global _rag_service
+    if _rag_service is None:
+        with _rag_service_lock:
+            if _rag_service is None:
+                _rag_service = RAGService()
+    return _rag_service

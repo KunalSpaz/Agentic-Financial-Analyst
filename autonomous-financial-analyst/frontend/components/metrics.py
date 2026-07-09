@@ -30,7 +30,7 @@ def confidence_gauge(score: float, recommendation: str, color: str = "#2196F3") 
             gauge={
                 "axis": {"range": [0, 100], "tickwidth": 1},
                 "bar": {"color": color},
-                "bgcolor": "white",
+                "bgcolor": "#1e2a3a",
                 "borderwidth": 2,
                 "bordercolor": "gray",
                 "steps": [

@@ -1,39 +1,46 @@
 """
 investment_decision_agent.py
 -----------------------------
-CrewAI Investment Decision Agent — generates buy/hold/sell recommendations
-with confidence scores.
+LangGraph Investment Decision node — confirms or refines the deterministic
+recommendation based on the synthesised financial analysis.
 """
 from __future__ import annotations
-from crewai import Agent
-from backend.utils.config import settings
+
+from typing import Callable, Dict
+
+from backend.agents.llm import get_chat_model
+from backend.agents.prompts import build_prompt
+from backend.agents.state import StockAnalysisState
+
+ROLE = "Investment Decision Strategist"
+GOAL = (
+    "Generate precise buy/hold/sell investment recommendations with a "
+    "0–100 confidence score. Base decisions on weighted signals from "
+    "technical analysis (50%), news sentiment (30%), and market momentum (20%). "
+    "Always provide clear, evidence-based rationale."
+)
+BACKSTORY = (
+    "You are a portfolio manager who has generated alpha for institutional "
+    "investors for over a decade. You make conviction-driven investment "
+    "decisions by rigorously weighing quantitative and qualitative factors."
+)
 
 
-def create_investment_decision_agent() -> Agent:
-    """
-    Instantiate the Investment Decision Agent.
+def create_investment_decision_node() -> Callable[[StockAnalysisState], Dict[str, str]]:
+    """Build the LangGraph node function for the Investment Decision agent."""
+    llm = get_chat_model()
 
-    Takes the synthesised financial analysis and produces a structured
-    recommendation (STRONG BUY/BUY/HOLD/SELL/STRONG SELL) with a
-    0–100 confidence score and clear rationale.
+    def node(state: StockAnalysisState) -> Dict[str, str]:
+        ticker = state.get("ticker", "")
+        score = state.get("score", 0.0)
+        recommendation = state.get("recommendation", "HOLD")
+        analysis = state.get("financial_analysis", "")
+        task = (
+            f"Based on the following financial analysis for {ticker}, confirm or refine "
+            f"the preliminary recommendation of {recommendation} (confidence: {score:.1f}/100). "
+            f"Provide clear rationale and key risk factors.\n\n{analysis}"
+        )
+        response = llm.invoke(build_prompt(ROLE, GOAL, BACKSTORY, task))
+        return {"investment_decision": response.content}
 
-    Returns:
-        Configured :class:`crewai.Agent` instance.
-    """
-    return Agent(
-        role="Investment Decision Strategist",
-        goal=(
-            "Generate precise buy/hold/sell investment recommendations with a "
-            "0–100 confidence score. Base decisions on weighted signals from "
-            "technical analysis (50%), news sentiment (30%), and market momentum (20%). "
-            "Always provide clear, evidence-based rationale."
-        ),
-        backstory=(
-            "You are a portfolio manager who has generated alpha for institutional "
-            "investors for over a decade. You make conviction-driven investment "
-            "decisions by rigorously weighing quantitative and qualitative factors."
-        ),
-        verbose=True,
-        allow_delegation=False,
-        llm=settings.openai_model,
-    )
+    return node

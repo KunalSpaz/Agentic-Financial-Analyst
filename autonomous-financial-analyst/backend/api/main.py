@@ -8,6 +8,7 @@ runs database migrations on startup, and starts the APScheduler.
 """
 from __future__ import annotations
 
+import hmac
 import os
 import threading
 import uuid
@@ -17,10 +18,10 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
+from backend.api.rate_limit import limiter
 from backend.api.routes.stock_routes import router as stock_router
 from backend.api.routes.market_routes import router as market_router
 from backend.api.routes.portfolio_routes import router as portfolio_router
@@ -34,9 +35,6 @@ from backend.utils.logger import get_logger, request_id_ctx
 from backend.utils.scheduler import start_scheduler, shutdown_scheduler
 
 logger = get_logger(__name__)
-
-# ── Rate limiter (shared instance imported by route modules) ──────────────────
-limiter = Limiter(key_func=get_remote_address)
 
 # ── Public paths that bypass API key auth ────────────────────────────────────
 _PUBLIC_PATHS = {"/", "/docs", "/redoc", "/openapi.json"}
@@ -113,9 +111,8 @@ def create_app() -> FastAPI:
     # ── Generic 500 handler — never leak internal exception details ───────────
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        logger.error(
-            "Unhandled exception on %s %s: %s",
-            request.method, request.url.path, exc,
+        logger.exception(
+            "Unhandled exception on %s %s", request.method, request.url.path,
         )
         body: dict = {"detail": "Internal server error."}
         if settings.app_env == "development":
@@ -124,12 +121,22 @@ def create_app() -> FastAPI:
 
     # ── Fix 1: CORS — restrict to configured origins ──────────────────────────
     origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+    allow_credentials = True
+    if "*" in origins:
+        # Combining a wildcard origin with credentialed requests lets any site
+        # make authenticated cross-origin calls — Starlette would otherwise
+        # just echo the request's Origin header back, silently defeating the
+        # wildcard's intent.
+        allow_credentials = False
+        logger.warning(
+            "ALLOWED_ORIGINS includes '*' — disabling credentialed CORS requests."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
-        allow_headers=["*", "X-API-Key"],
+        allow_headers=["*"],
     )
 
     # ── Request correlation ID ────────────────────────────────────────────────
@@ -162,7 +169,7 @@ def create_app() -> FastAPI:
         if settings.api_secret_key:
             if request.url.path not in _PUBLIC_PATHS:
                 provided = request.headers.get("X-API-Key", "")
-                if provided != settings.api_secret_key:
+                if not hmac.compare_digest(provided, settings.api_secret_key):
                     return JSONResponse(
                         status_code=401,
                         content={"detail": "Invalid or missing X-API-Key header."},

@@ -39,24 +39,27 @@ st.info(
 )
 
 if st.button("🔍 Run Optimization", type="primary"):
-    with st.spinner(f"Running grid-search optimization for {ticker}… (may take several minutes)"):
-        try:
-            resp = httpx.post(
-                f"{api_url}/optimize-strategy",
-                json={
-                    "ticker": ticker,
-                    "objective": objective,
-                    "period": period,
-                    "sentiment_label": sentiment,
-                },
-                timeout=600,
-            )
-            if resp.status_code == 200:
-                st.session_state["opt_result"] = resp.json()
-            else:
-                st.error(f"API error: {resp.text}")
-        except Exception as e:
-            st.error(f"Connection error: {e}")
+    if not ticker:
+        st.warning("Please enter a ticker symbol.")
+    else:
+        with st.spinner(f"Running grid-search optimization for {ticker}… (may take several minutes)"):
+            try:
+                resp = httpx.post(
+                    f"{api_url}/optimize-strategy",
+                    json={
+                        "ticker": ticker,
+                        "objective": objective,
+                        "period": period,
+                        "sentiment_label": sentiment,
+                    },
+                    timeout=600,
+                )
+                if resp.status_code == 200:
+                    st.session_state["opt_result"] = resp.json()
+                else:
+                    st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+            except Exception:
+                st.error("Cannot connect to the backend. Please check that it's running.")
 
 if "opt_result" in st.session_state:
     opt = st.session_state["opt_result"]
@@ -88,3 +91,8 @@ if "opt_result" in st.session_state:
         df_results["max_drawdown"] = df_results["max_drawdown"].map(lambda x: f"{x:.2%}")
         df_results["win_rate"] = df_results["win_rate"].map(lambda x: f"{x:.2%}")
         st.dataframe(df_results, use_container_width=True)
+
+    if opt.get("narrative"):
+        st.divider()
+        st.subheader("🧠 AI Optimization Assessment")
+        st.markdown(opt["narrative"])

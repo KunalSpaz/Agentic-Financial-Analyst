@@ -118,15 +118,15 @@ class ConfidenceScoreService:
 
         if label == "POSITIVE":
             score = 70.0 + compound * 30  # 70–100 range
-            detail = {"label": "POSITIVE", "note": "+20 applied (positive sentiment)"}
         elif label == "NEGATIVE":
             score = 30.0 + compound * 30  # 0–30 range (compound is negative)
-            detail = {"label": "NEGATIVE", "note": "-20 applied (negative sentiment)"}
         else:
             score = 50.0
-            detail = {"label": "NEUTRAL", "note": "+5 applied (neutral sentiment)"}
 
-        return max(0.0, min(100.0, score)), detail
+        clamped = max(0.0, min(100.0, score))
+        delta = clamped - 50.0  # baseline is the neutral midpoint
+        detail = {"label": label, "note": f"{delta:+.1f} applied ({label.lower()} sentiment, compound={compound:.3f})"}
+        return clamped, detail
 
     def _score_momentum(self, signals: Dict[str, Any]) -> tuple[float, Dict]:
         """Score market momentum on 0–100 scale."""

@@ -7,30 +7,26 @@ Results are cached in-memory using a simple TTL dict to reduce API calls.
 
 from __future__ import annotations
 
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 import yfinance as yf
 
+from backend.utils.cache import TTLCache
 from backend.utils.config import settings
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Simple in-memory TTL cache: {key: (timestamp, value)}
-_cache: Dict[str, tuple[float, Any]] = {}
+_cache = TTLCache(ttl_seconds=settings.market_data_cache_ttl)
 
 
-def _cache_get(key: str) -> Optional[Any]:
-    entry = _cache.get(key)
-    if entry and (time.time() - entry[0]) < settings.market_data_cache_ttl:
-        return entry[1]
-    return None
+def _cache_get(key: str) -> Any:
+    return _cache.get(key)
 
 
 def _cache_set(key: str, value: Any) -> None:
-    _cache[key] = (time.time(), value)
+    _cache.set(key, value)
 
 
 class MarketDataService:

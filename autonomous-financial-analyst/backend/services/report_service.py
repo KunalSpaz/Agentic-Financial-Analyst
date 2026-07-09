@@ -67,7 +67,7 @@ class ReportService:
             f"  • {n.get('title', '')}" for n in top_news[:5]
         )
         indices_lines = "\n".join(
-            f"  {sym}: ${data.get('price', 'N/A')} ({data.get('change_pct', 0):.2f}%)"
+            f"  {sym}: ${data.get('price', 'N/A')} ({(data.get('change_pct') or 0):.2f}%)"
             for sym, data in market_indices.items()
         )
 

@@ -26,16 +26,28 @@ with col_refresh:
 with col_info:
     st.info("Click 'Run Full Scan' to re-score all tickers, or view the latest cached results below.")
 
-with st.spinner("Loading opportunities…"):
-    url = f"{api_url}/market-opportunities{'?refresh=true' if refresh else ''}"
-    try:
-        resp = httpx.get(url, timeout=600)
-        opportunities = resp.json() if resp.status_code == 200 else []
-    except Exception as e:
-        st.error(f"Connection error: {e}")
-        opportunities = []
+if "scan_result" not in st.session_state or refresh:
+    with st.spinner("Loading opportunities…"):
+        url = f"{api_url}/market-opportunities{'?refresh=true' if refresh else ''}"
+        try:
+            resp = httpx.get(url, timeout=600)
+            if resp.status_code == 200:
+                st.session_state["scan_result"] = resp.json()
+            else:
+                st.session_state["scan_result"] = {"opportunities": [], "market_narrative": ""}
+                st.error(f"Backend returned an error (status {resp.status_code}). Please try again.")
+        except Exception:
+            st.session_state["scan_result"] = {"opportunities": [], "market_narrative": ""}
+            st.error("Cannot connect to the backend. Please check that it's running.")
+
+scan_result = st.session_state.get("scan_result", {})
+opportunities = scan_result.get("opportunities", [])
+market_narrative = scan_result.get("market_narrative", "")
 
 if opportunities:
+    if market_narrative:
+        st.info(market_narrative)
+
     st.plotly_chart(opportunity_bar_chart(opportunities), use_container_width=True)
 
     st.divider()
